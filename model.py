@@ -5,6 +5,12 @@ import torch.nn.functional as F
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+class SketchRNN():
+    def __init__(self):
+        self.encoder = Encoder()
+        self.decoder = Decoder()
+
+
 class Encoder(nn.Module):
     def __init__(self, enc_hidden_size=256, Nz=128, dropout=0.9):
         super().__init__()
@@ -44,8 +50,8 @@ class Decoder(nn.Module):
         s = s.unsqueeze(0)
 
         inputs = torch.cat((s, z), 2)
-        _, (h, c) = self.decoder_rnn(inputs, h0c0)
-        y = self.fc_y(h)
+        o, (h, c) = self.decoder_rnn(inputs, h0c0)
+        y = self.fc_y(o)
 
         pi = F.softmax(y[0, :, 0:self.M-1], 1)
         mu_x = y[0, :, self.M:2*self.M-1]
