@@ -6,9 +6,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class SketchRNN():
-    def __init__(self):
-        self.encoder = Encoder()
-        self.decoder = Decoder()
+    def __init__(self, enc_hidden_size=256, dec_hidden_size=256, Nz=128, M=20, dropout=0.9):
+        self.encoder = Encoder(enc_hidden_size, Nz, dropout)
+        self.decoder = Decoder(dec_hidden_size, Nz, M, dropout)
 
 
 class Encoder(nn.Module):

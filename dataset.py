@@ -14,8 +14,8 @@ class To5vStrokes():
         result = np.zeros((self.max_len, 5), dtype=float)
         l = len(stroke)
         assert l <= self.max_len
-        result[0:l, 0:2] = self.stroke[:, 0:2]
-        result[0:l, 3] = self.stroke[:, 2]
+        result[0:l, 0:2] = stroke[:, 0:2]
+        result[0:l, 3] = stroke[:, 2]
         result[0:l, 2] = 1 - result[0:l, 3]
         result[l:, 4] = 1
         return torch.from_numpy(result)
@@ -31,4 +31,6 @@ class V5Dataset(torch.utils.data.Dataset):
         return self.data.shape[0]
 
     def __getitem__(self, index):
-        return self.data[index] if self.transform is None else self.transform(self.data[index])
+        data = self.data[index] if self.transform is None else self.transform(
+            self.data[index])
+        return data, 0

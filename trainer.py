@@ -5,21 +5,23 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Trainer():
-    def __init__(self, model, learning_rate):
+    def __init__(self, model, data_loader, learning_rate=0.0001):
         self.model = model
+        self.data_loader = data_loader
         self.enc_opt = optim.Adam(
-            self.mode.encoder.parameters(), lr=learning_rate)
+            self.model.encoder.parameters(), lr=learning_rate)
         self.dec_opt = optim.Adam(
-            self.mode.decoder.parameters(), lr=learning_rate)
+            self.model.decoder.parameters(), lr=learning_rate)
 
-    def train(self, X, epoch):
+    def train(self, epoch):
         for e in range(epoch):
-            for x in X:
+            for x, _ in self.data_loader:
+                x = x.permute(1, 0, 2)
                 self.train_on_batch(x)
 
     def train_on_batch(self, x):
-        self.mode.encoder.zero_grad()
-        self.mode.decoder.zero_grad()
+        self.model.encoder.zero_grad()
+        self.model.decoder.zero_grad()
 
         loss = self.loss_on_batch(x)
         loss.backward()
