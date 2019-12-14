@@ -1,5 +1,6 @@
 import torch
 import torch.optim as optim
+from utils import ls, lp, lkl, ns
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -41,9 +42,11 @@ class Trainer():
         (pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy,
          q), _ = self.model.decoder(dec_input)
 
+        Ns = ns(x)
         Ls = ls(dec_input[:, :, 0], dec_input[:, :, 1],
-                pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy)
-        Lp = lp(dec_input[:, :, 2], dec_input[:, :, 3], dec_input[:, :, 4], q)
+                pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, Ns)
+        Lp = lp(dec_input[:, :, 2], dec_input[:, :, 3],
+                dec_input[:, :, 4], q)
         Lr = Ls + Lp
 
         Lkl = lkl(mu, sigma_hat)
