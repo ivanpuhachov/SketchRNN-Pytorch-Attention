@@ -18,7 +18,7 @@ class To5vStrokes():
         result[0:l, 3] = stroke[:, 2]
         result[0:l, 2] = 1 - result[0:l, 3]
         result[l:, 4] = 1
-        return torch.from_numpy(result)
+        return torch.from_numpy(result).float()
 
 
 class V5Dataset(torch.utils.data.Dataset):

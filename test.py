@@ -14,4 +14,4 @@ model = SketchRNN(enc_hidden_size=256, dec_hidden_size=256,
                   Nz=128, M=20, dropout=0.9)
 trainer = Trainer(model, dataloader, learning_rate=0.0001)
 
-trainer.train(epoch=10)
+trainer.train(epoch=3)

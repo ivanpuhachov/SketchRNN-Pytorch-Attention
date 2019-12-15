@@ -12,7 +12,7 @@ class SketchRNN():
 
 
 class Encoder(nn.Module):
-    def __init__(self, enc_hidden_size=256, Nz=128, dropout=0.9):
+    def __init__(self, enc_hidden_size=256, Nz=128, dropout=0.1):
         super().__init__()
         self.encoder_rnn = nn.LSTM(
             5, enc_hidden_size, dropout=dropout, bidirectional=True)
@@ -34,7 +34,7 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, dec_hidden_size=256, Nz=128, M=20, dropout=0.9):
+    def __init__(self, dec_hidden_size=256, Nz=128, M=20, dropout=0.1):
         super().__init__()
         self.M = M
         self.dec_hidden_size = dec_hidden_size
@@ -42,23 +42,29 @@ class Decoder(nn.Module):
         self.decoder_rnn = nn.LSTM(Nz+5, dec_hidden_size, dropout=dropout)
         self.fc_y = nn.Linear(dec_hidden_size, 6*M+3)
 
-    def forward(self, s, z):
+    def forward(self, S, z):
+        batch_size = S.shape[1]
+        seq_len = S.shape[0]
+
         h0, c0 = torch.split(torch.tanh(self.fc_hc(z)),
                              self.dec_hidden_size, 1)
         h0c0 = (h0.unsqueeze(0), c0.unsqueeze(0))
-        z = z.unsqueeze(0)
-        s = s.unsqueeze(0)
 
-        inputs = torch.cat((s, z), 2)
-        o, (h, c) = self.decoder_rnn(inputs, h0c0)
+        sos = torch.stack(
+            [torch.Tensor([0, 0, 1, 0, 0], device=device)]*batch_size).unsqueeze(0)
+        zs = torch.stack([z] * seq_len)
+        dec_input = torch.cat([sos, S[:-1, :, :]], 0)
+        dec_input = torch.cat([dec_input, zs], 2)
+
+        o, (h, c) = self.decoder_rnn(dec_input, h0c0)
         y = self.fc_y(o)
 
-        pi = F.softmax(y[0, :, 0:self.M-1], 1)
-        mu_x = y[0, :, self.M:2*self.M-1]
-        mu_y = y[0, :, 2*self.M:3*self.M-1]
-        sigma_x = torch.exp(y[0, :, 3*self.M:4*self.M])
-        sigma_y = torch.exp(y[0, :, 4*self.M:5*self.M])
-        rho_xy = torch.tanh(y[0, :, 5*self.M:6*self.M])
-        q = F.softmax(y[0, :, 6*self.M:6*self.M+3], 1)
+        pi = F.softmax(y[:, :, 0:self.M], 1)
+        mu_x = y[:, :, self.M:2*self.M]
+        mu_y = y[:, :, 2*self.M:3*self.M]
+        sigma_x = torch.exp(y[:, :, 3*self.M:4*self.M])
+        sigma_y = torch.exp(y[:, :, 4*self.M:5*self.M])
+        rho_xy = torch.tanh(y[:, :, 5*self.M:6*self.M])
+        q = F.softmax(y[:, :, 6*self.M:6*self.M+3], 1)
 
         return (pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q), (h, c)
