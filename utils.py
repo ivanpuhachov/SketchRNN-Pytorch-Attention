@@ -1,67 +1,34 @@
-import numpy as np
 import torch
+import matplotlib.pyplot as plt
+import PIL
+import numpy as np
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def ls(x, y, pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, Ns):
-    Nmax = x.shape[0]
-    batch_size = x.shape[1]
+def strokes2rgb(S):
+    plt.axis('equal')
+    S = S.clone().detach().cpu()
+    N = S.shape[0]
 
-    pdf_val = torch.sum(pi * pdf_2d_normal(x, y, mu_x, mu_y,
-                                           sigma_x, sigma_y, rho_xy), dim=2)
+    p2list = [-1]
+    prev = torch.tensor([0, 0], device='cpu', dtype=torch.float)
+    for i in range(N):
+        S[i, 0, 0:2] += prev
+        prev = S[i, 0, 0:2]
+        if S[i, 0, 3] == 1:
+            p2list.append(i)
+    p2list.append(N-1)
 
-    # make zero_out
-    zero_out = torch.cat([torch.ones(Ns[0], device=device, dtype=torch.float),
-                          torch.zeros(Nmax - Ns[0], device=device, dtype=torch.float)]).unsqueeze(1)
-    for i in range(1, batch_size):
-        zeros = torch.cat([torch.ones(Ns[i], device=device, dtype=torch.float),
-                           torch.zeros(Nmax - Ns[i], device=device, dtype=torch.float)]).unsqueeze(1)
-        zero_out = torch.cat([zero_out, zeros], dim=1)
+    for i in range(len(p2list)-1):
+        s = p2list[i]
+        e = p2list[i+1]
+        plt.plot(S[s+1:e+1, 0, 0], -S[s+1:e+1, 0, 1])
 
-    return -torch.sum(zero_out * torch.log(pdf_val + 1e-5)) \
-        / float(Nmax)
-
-
-def lp(p1, p2, p3, q):
-    p = torch.cat([p1.unsqueeze(2), p2.unsqueeze(2), p3.unsqueeze(2)], dim=2)
-    return -torch.sum(p*torch.log(q + 1e-5)) \
-        / (q.shape[0] * q.shape[1])
-
-
-def lkl(mu, sigma):
-    return -torch.sum(1+sigma - mu**2 - torch.exp(sigma)) \
-        / (2. * mu.shape[0] * mu.shape[1])
-
-
-def pdf_2d_normal(x, y, mu_x, mu_y, sigma_x, sigma_y, rho_xy):
-    M = mu_x.shape[2]
-    x = torch.stack([x]*M, dim=2)
-    y = torch.stack([y]*M, dim=2)
-    norm1 = x - mu_x
-    norm2 = y - mu_y
-    sxsy = sigma_x * sigma_y
-
-    z = (norm1/sigma_x)**2 + (norm2/sigma_y)**2 -\
-        (2. * rho_xy * norm1 * norm2 / sxsy)
-
-    neg_rho = 1 - rho_xy**2
-    result = torch.exp(-z/(2.*neg_rho))
-    denom = 2. * np.pi * sxsy * neg_rho**2
-    result = result / denom
-    return result
-
-
-def ns(x):
-    Ns = []
-    for i in range(x.shape[1]):
-        Ns.append(endindex(x[:, i, :]))
-
-    return Ns
-
-
-def endindex(x):
-    Nmax = x.shape[0]
-    for i in range(Nmax):
-        if x[i, 4] == 1:
-            return i
-    return Nmax-1
+    canvas = plt.get_current_fig_manager().canvas
+    canvas.draw()
+    pil_image = PIL.Image.frombytes('RGB', canvas.get_width_height(),
+                                    canvas.tostring_rgb())
+    plt.close("all")
+    img_array = np.asarray(pil_image)
+    return np.transpose(img_array, (2, 0, 1))
