@@ -7,7 +7,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Trainer():
-    def __init__(self, model, data_loader, tb_writer, checkpoint_dir=None, learning_rate=0.0001, wkl=1.0, eta_min=0.0, R=0.99999, clip_val=1.0):
+    def __init__(self, model, data_loader, tb_writer, checkpoint_dir=None, learning_rate=0.0001, wkl=1.0, eta_min=0.0, R=0.99999, KLmin=0.2, clip_val=1.0):
         self.model = model
         self.data_loader = data_loader
         self.tb_writer = tb_writer
@@ -21,6 +21,7 @@ class Trainer():
         self.epoch = 0
         self.mininum_loss = -0.2  # from this loss, the trainer save models
         self.eta_min = eta_min
+        self.KLmin = KLmin
         self.R = R
         self.step_per_epoch = len(
             self.data_loader.dataset) / self.data_loader.batch_size
@@ -122,7 +123,7 @@ class Trainer():
         Lp = lp(x[:, :, 2], x[:, :, 3],
                 x[:, :, 4], q)
         Lr = Ls + Lp
-        Lkl = lkl(mu, sigma_hat)
+        Lkl = lkl(mu, sigma_hat, self.KLmin)
 
         step = step_in_epoch + self.step_per_epoch * self.epoch
         eta = 1.0 - (1.0 - self.eta_min) * self.R**step
