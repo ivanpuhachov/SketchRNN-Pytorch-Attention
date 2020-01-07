@@ -10,7 +10,7 @@ dataset = V5Dataset(str(data_path), To5vStrokes(max_len=200), pre_scaling=True)
 dataloader = torch.utils.data.DataLoader(
     dataset, batch_size=100, shuffle=True)
 
-log_dir = 'log/testlogs0'
+log_dir = 'log/'
 tb_writer = SummaryWriter(log_dir)
 
 checkpoint_dir = 'checkpoints/'
