@@ -19,7 +19,7 @@ class Trainer():
         self.wkl = wkl
         self.clip_val = clip_val
         self.epoch = 0
-        self.mininum_loss = -0.2  # from this loss, the trainer save models
+        self.mininum_loss = -0.1  # from this loss, the trainer save models
         self.eta_min = eta_min
         self.KLmin = KLmin
         self.R = R
