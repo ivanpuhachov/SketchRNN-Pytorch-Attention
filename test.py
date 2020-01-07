@@ -19,6 +19,6 @@ model = SketchRNN(enc_hidden_size=256, dec_hidden_size=512,
 trainer = Trainer(model, dataloader, tb_writer,
                   checkpoint_dir, learning_rate=0.0001)
 
-trainer.train(epoch=300000)
+trainer.train(epoch=300)
 
 tb_writer.close()
