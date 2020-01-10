@@ -35,7 +35,7 @@ class Trainer():
         for e in range(epoch):
             x = None
             step_in_epoch = 0
-            for x, _ in tqdm(self.data_loader, ascii=True):
+            for x, _ in tqdm(self.data_loader, ascii=True, disable=None):
                 x = x.permute(1, 0, 2)
                 self.train_on_batch(x, step_in_epoch)
                 step_in_epoch += 1
