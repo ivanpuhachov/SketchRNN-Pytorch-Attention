@@ -3,11 +3,12 @@ import torch
 import torch.optim as optim
 from utils import strokes2rgb
 from tqdm import tqdm
+import os
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Trainer():
-    def __init__(self, model, data_loader, tb_writer, checkpoint_dir=None, learning_rate=0.0001, wkl=1.0, eta_min=0.0, R=0.99999, KLmin=0.2, clip_val=1.0):
+    def __init__(self, model, data_loader, tb_writer, checkpoint_dir="logs/", learning_rate=0.0001, wkl=1.0, eta_min=0.0, R=0.99999, KLmin=0.2, clip_val=1.0):
         self.model = model
         self.data_loader = data_loader
         self.tb_writer = tb_writer
@@ -15,66 +16,60 @@ class Trainer():
             self.model.encoder.parameters(), lr=learning_rate)
         self.dec_opt = optim.Adam(
             self.model.decoder.parameters(), lr=learning_rate)
+        assert os.path.exists(checkpoint_dir)
         self.checkpoint_dir = checkpoint_dir
         self.wkl = wkl
         self.clip_val = clip_val
         self.epoch = 0
-        self.mininum_loss = -0.1  # from this loss, the trainer save models
+        self.mininum_loss = 1.0  # from this loss, the trainer save models
         self.eta_min = eta_min
         self.KLmin = KLmin
         self.R = R
         self.step_per_epoch = len(
             self.data_loader.dataset) / self.data_loader.batch_size
-        # TODO plot Decoder Graph
-        inputs = (self.data_loader.dataset[0])[0].unsqueeze(1)
-        self.tb_writer.add_graph(self.model.encoder, inputs)
-        #z, _, _ = self.model.encoder(inputs)
-        #self.tb_writer.add_graph(self.model.decoder, (inputs, z))
 
     def train(self, epoch):
+        self.save_checkpoint(path=self.checkpoint_dir + "init.pth", msg=dict())
         for e in range(epoch):
             x = None
             step_in_epoch = 0
-            for x, _ in tqdm(self.data_loader, ascii=True, disable=None):
+            losses = [0 for i in range(6)]
+            for i, data in tqdm(enumerate(self.data_loader), total=len(self.data_loader)):
+                x, lengths = data[0].to(device), data[1].to(device)
                 x = x.permute(1, 0, 2)
-                self.train_on_batch(x, step_in_epoch)
+                batch_losses = self.train_on_batch(x, step_in_epoch)
+                losses = [losses[i] + batch_losses[i] for i in range(6)]
                 step_in_epoch += 1
             self.epoch += 1
 
-            # TODO fix proper batch to calculate loss
+            losses = [losses[i] / step_in_epoch for i in range(6)]
+
+            # Train losses plot
             with torch.no_grad():
-                loss = self.loss_on_batch(x)
-                self.tb_writer.add_scalar("loss/train", loss[0], self.epoch)
-                self.tb_writer.add_scalar("loss/train/Ls", loss[1], self.epoch)
-                self.tb_writer.add_scalar("loss/train/Lp", loss[2], self.epoch)
-                self.tb_writer.add_scalar("loss/train/Lr", loss[3], self.epoch)
+                print("to tensorboard", losses)
+                self.tb_writer.add_scalar("train/Loss", losses[0], self.epoch)
+                self.tb_writer.add_scalar("train/Ls", losses[1], self.epoch)
+                self.tb_writer.add_scalar("train/Lp", losses[2], self.epoch)
+                self.tb_writer.add_scalar("train/Lr", losses[3], self.epoch)
                 self.tb_writer.add_scalar(
-                    "loss/train/Lkl", loss[4], self.epoch)
+                    "train/Lkl", losses[4], self.epoch)
                 self.tb_writer.add_scalar(
-                    "loss/train/wkl*eta*Lkl", loss[5], self.epoch)
+                    "train/weighted_Lkl", losses[5], self.epoch)
 
                 # Save model
-                if self.epoch % 10 == 0:
-                    if self.mininum_loss > loss[0]:
-                        self.mininum_loss = loss[0]
-                        torch.save(self.model.encoder.cpu(), str(
-                            self.checkpoint_dir) + '/encoder-' + str(float(self.mininum_loss)) + '.pth')
-                        torch.save(self.model.decoder.cpu(), str(
-                            self.checkpoint_dir) + '/decoder-' + str(float(self.mininum_loss)) + '.pth')
-                        # TODO save optimizer of cpu
-                        torch.save(self.enc_opt, str(self.checkpoint_dir) +
-                                   '/enc_opt-' + str(float(self.mininum_loss)) + '.pth')
-                        torch.save(self.dec_opt, str(self.checkpoint_dir) +
-                                   '/dec_opt-' + str(float(self.mininum_loss)) + '.pth')
-                        self.model.encoder.to(device)
-                        self.model.decoder.to(device)
+                if self.mininum_loss > losses[0]:
+                    print (f"New best: {losses[0]}")
+                    self.mininum_loss = losses[0]
+                    self.save_checkpoint(path=self.checkpoint_dir+f"checkpoint_{e}.pth",
+                                         msg={"epoch": epoch, "losses": losses})
 
+            # Reconstruction plots
             x = x[:, 0, :].unsqueeze(1)
-            origial = x
+            original = x
             self.tb_writer.add_text(
-                'reconstruction/original', str(origial), self.epoch)
+                'reconstruction/original', str(original), self.epoch)
             self.tb_writer.add_image(
-                "reconstruction/original", strokes2rgb(origial), self.epoch)
+                "reconstruction/original", strokes2rgb(original), self.epoch)
 
             recon = self.model.reconstruct(x)
             self.tb_writer.add_text(
@@ -90,7 +85,7 @@ class Trainer():
         self.model.decoder.train()
         self.model.decoder.zero_grad()
 
-        loss, _, _, _, _, _ = self.loss_on_batch(x, step_in_epoch)
+        loss, ls, lp, lr, lkl, weighted_lkl = self.loss_on_batch(x, step_in_epoch)
         loss.backward()
 
         torch.nn.utils.clip_grad_value_(
@@ -101,6 +96,8 @@ class Trainer():
         self.enc_opt.step()
         self.dec_opt.step()
 
+        return [x.detach().cpu().item() for x in (loss, ls, lp, lr, lkl, weighted_lkl)]
+
     def loss_on_batch(self, x, step_in_epoch=0):
         batch_size = x.shape[1]
 
@@ -109,8 +106,11 @@ class Trainer():
         sos = torch.stack(
             [torch.tensor([0, 0, 1, 0, 0], device=device, dtype=torch.float)]*batch_size).unsqueeze(0)
         dec_input = torch.cat([sos, x[:-1, :, :]], 0)
-        h0, c0 = torch.split(torch.tanh(self.model.decoder.fc_hc(z)),
-                             self.model.decoder.dec_hidden_size, 1)
+        h0, c0 = torch.split(
+            torch.tanh(
+                self.model.decoder.fc_hc(z)
+                ),
+            self.model.decoder.dec_hidden_size, 1)
         hidden_cell = (h0.unsqueeze(0).contiguous(),
                        c0.unsqueeze(0).contiguous())
 
@@ -127,8 +127,28 @@ class Trainer():
 
         step = step_in_epoch + self.step_per_epoch * self.epoch
         eta = 1.0 - (1.0 - self.eta_min) * self.R**step
-        loss = Lr + self.wkl * eta * Lkl
-        return loss, Ls, Lp, Lr, Lkl, self.wkl * eta * Lkl
+        weighted_Lkl = self.wkl * eta * Lkl
+        loss = Lr + weighted_Lkl
+        return loss, Ls, Lp, Lr, Lkl, weighted_Lkl
+
+    def save_checkpoint(self, path, msg: dict):
+        torch.save({
+            'encoder_state_dict': self.model.encoder.state_dict(),
+            'decoder_state_dict': self.model.decoder.state_dict(),
+            'encoder_opt': self.enc_opt.state_dict(),
+            'decoder_opt': self.dec_opt.state_dict(),
+            **msg
+        }, path)
+
+    def load_from_checkpoint(self, path):
+        checkpoint = torch.load(path)
+        for k in checkpoint.keys():
+            if k not in ['encoder_state_dict', 'decoder_state_dict', 'encoder_opt', 'decoder_opt']:
+                print(k, checkpoint[k])
+        self.model.encoder.load_state_dict(checkpoint['encoder_state_dict'])
+        self.model.decoder.load_state_dict(checkpoint['decoder_state_dict'])
+        self.enc_opt.load_state_dict(checkpoint['encoder_opt'])
+        self.dec_opt.load_state_dict(checkpoint['decoder_opt'])
 
 
 def ls(x, y, pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, zero_out):
