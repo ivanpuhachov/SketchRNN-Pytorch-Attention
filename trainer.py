@@ -8,9 +8,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Trainer():
-    def __init__(self, model, data_loader, tb_writer, checkpoint_dir="logs/", learning_rate=0.0001, wkl=1.0, eta_min=0.0, R=0.99999, KLmin=0.2, clip_val=1.0):
+    def __init__(self, model, data_loader, val_loader, tb_writer, checkpoint_dir="logs/", learning_rate=0.0001, wkl=1.0, eta_min=0.0, R=0.99999, KLmin=0.2, clip_val=1.0):
         self.model = model
         self.data_loader = data_loader
+        self.validation_loader = val_loader
         self.tb_writer = tb_writer
         self.enc_opt = optim.Adam(
             self.model.encoder.parameters(), lr=learning_rate)
@@ -31,6 +32,7 @@ class Trainer():
     def train(self, epoch):
         self.save_checkpoint(path=self.checkpoint_dir + "init.pth", msg=dict())
         for e in range(epoch):
+            print(f"\n - Training {e}")
             x = None
             step_in_epoch = 0
             losses = [0 for i in range(6)]
@@ -45,23 +47,35 @@ class Trainer():
             losses = [losses[i] / step_in_epoch for i in range(6)]
 
             # Train losses plot
-            with torch.no_grad():
-                print("to tensorboard", losses)
-                self.tb_writer.add_scalar("train/Loss", losses[0], self.epoch)
-                self.tb_writer.add_scalar("train/Ls", losses[1], self.epoch)
-                self.tb_writer.add_scalar("train/Lp", losses[2], self.epoch)
-                self.tb_writer.add_scalar("train/Lr", losses[3], self.epoch)
-                self.tb_writer.add_scalar(
-                    "train/Lkl", losses[4], self.epoch)
-                self.tb_writer.add_scalar(
-                    "train/weighted_Lkl", losses[5], self.epoch)
+            print("Training losses: ", losses)
+            self.tb_writer.add_scalar("train/Loss", losses[0], self.epoch)
+            self.tb_writer.add_scalar("train/Ls", losses[1], self.epoch)
+            self.tb_writer.add_scalar("train/Lp", losses[2], self.epoch)
+            self.tb_writer.add_scalar("train/Lr", losses[3], self.epoch)
+            self.tb_writer.add_scalar("train/Lkl", losses[4], self.epoch)
+            self.tb_writer.add_scalar("train/weighted_Lkl", losses[5], self.epoch)
+            self.tb_writer.add_scalars('train/tradeoff', {'Lkl': losses[4],
+                                                                 'Lr': losses[3]}, self.epoch)
 
-                # Save model
-                if self.mininum_loss > losses[0]:
-                    print (f"New best: {losses[0]}")
-                    self.mininum_loss = losses[0]
-                    self.save_checkpoint(path=self.checkpoint_dir+f"checkpoint_{e}.pth",
-                                         msg={"epoch": epoch, "losses": losses})
+            val_losses = self.validate()
+            print("Validation losses: ", val_losses)
+            self.tb_writer.add_scalar("val/Loss", val_losses[0], self.epoch)
+            self.tb_writer.add_scalar("val/Ls", val_losses[1], self.epoch)
+            self.tb_writer.add_scalar("val/Lp", val_losses[2], self.epoch)
+            self.tb_writer.add_scalar("val/Lr", val_losses[3], self.epoch)
+            self.tb_writer.add_scalar("val/Lkl", val_losses[4], self.epoch)
+            self.tb_writer.add_scalar("val/weighted_Lkl", val_losses[5], self.epoch)
+
+            # Save model
+            if self.mininum_loss > val_losses[0]:
+                print (f"New best: {val_losses[0]}")
+                self.mininum_loss = val_losses[0]
+                self.save_checkpoint(path=self.checkpoint_dir+f"best_model.pth",
+                                     msg={"epoch": epoch, "losses": losses, "val_losses": val_losses})
+
+            if e % 10 == 9:
+                self.save_checkpoint(path=self.checkpoint_dir + f"checkpoint_{e}.pth",
+                                     msg={"epoch": epoch, "losses": losses, "val_losses": val_losses})
 
             # Reconstruction plots
             x = x[:, 0, :].unsqueeze(1)
@@ -78,6 +92,7 @@ class Trainer():
                 "reconstruction/prediction", strokes2rgb(recon), self.epoch)
 
             self.tb_writer.flush()
+            print(f"- Done {e}")
 
     def train_on_batch(self, x, step_in_epoch=0):
         self.model.encoder.train()
@@ -97,6 +112,26 @@ class Trainer():
         self.dec_opt.step()
 
         return [x.detach().cpu().item() for x in (loss, ls, lp, lr, lkl, weighted_lkl)]
+
+    def validate(self):
+        self.model.encoder.eval()
+        self.model.decoder.eval()
+        step_in_epoch = 0
+        losses = [0 for i in range(6)]
+        with torch.no_grad():
+            for i, data in tqdm(enumerate(self.validation_loader), total=len(self.validation_loader)):
+                x, lengths = data[0].to(device), data[1].to(device)
+                x = x.permute(1, 0, 2)
+                batch_losses = self.loss_on_batch(x)
+                losses = [losses[i] + batch_losses[i].detach().cpu().item() for i in range(6)]
+                step_in_epoch += 1
+        #  losses = [loss, Ls, Lp, Lr, Lkl, weighted_Lkl]
+        losses = [losses[i] / step_in_epoch for i in range(6)]
+        losses[5] = losses[4] * self.wkl
+        losses[0] = losses[3] + losses[5]
+        return losses
+
+
 
     def loss_on_batch(self, x, step_in_epoch=0):
         batch_size = x.shape[1]
@@ -132,6 +167,7 @@ class Trainer():
         return loss, Ls, Lp, Lr, Lkl, weighted_Lkl
 
     def save_checkpoint(self, path, msg: dict):
+        print(f"Saving model to {path}")
         torch.save({
             'encoder_state_dict': self.model.encoder.state_dict(),
             'decoder_state_dict': self.model.decoder.state_dict(),
