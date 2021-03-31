@@ -48,23 +48,11 @@ class Trainer():
 
             # Train losses plot
             print("Training losses: ", losses)
-            self.tb_writer.add_scalar("train/Loss", losses[0], self.epoch)
-            self.tb_writer.add_scalar("train/Ls", losses[1], self.epoch)
-            self.tb_writer.add_scalar("train/Lp", losses[2], self.epoch)
-            self.tb_writer.add_scalar("train/Lr", losses[3], self.epoch)
-            self.tb_writer.add_scalar("train/Lkl", losses[4], self.epoch)
-            self.tb_writer.add_scalar("train/weighted_Lkl", losses[5], self.epoch)
-            self.tb_writer.add_scalars('train/tradeoff', {'Lkl': losses[4],
-                                                                 'Lr': losses[3]}, self.epoch)
+            self.tensorboard_losses(losses, msg="train")
 
             val_losses = self.validate()
             print("Validation losses: ", val_losses)
-            self.tb_writer.add_scalar("val/Loss", val_losses[0], self.epoch)
-            self.tb_writer.add_scalar("val/Ls", val_losses[1], self.epoch)
-            self.tb_writer.add_scalar("val/Lp", val_losses[2], self.epoch)
-            self.tb_writer.add_scalar("val/Lr", val_losses[3], self.epoch)
-            self.tb_writer.add_scalar("val/Lkl", val_losses[4], self.epoch)
-            self.tb_writer.add_scalar("val/weighted_Lkl", val_losses[5], self.epoch)
+            self.tensorboard_losses(val_losses, msg="val")
 
             # Save model
             if self.mininum_loss > val_losses[0]:
@@ -80,18 +68,9 @@ class Trainer():
             # Reconstruction plots
             x = x[:, 0, :].unsqueeze(1)
             original = x
-            self.tb_writer.add_text(
-                'reconstruction/original', str(original), self.epoch)
-            self.tb_writer.add_image(
-                "reconstruction/original", strokes2rgb(original), self.epoch)
-
             recon = self.model.reconstruct(x)
-            self.tb_writer.add_text(
-                'reconstruction/prediction', str(recon), self.epoch)
-            self.tb_writer.add_image(
-                "reconstruction/prediction", strokes2rgb(recon), self.epoch)
+            self.tensorboard_reconstruction(original, recon)
 
-            self.tb_writer.flush()
             print(f"- Done {e}")
 
     def train_on_batch(self, x, step_in_epoch=0):
@@ -131,26 +110,10 @@ class Trainer():
         losses[0] = losses[3] + losses[5]
         return losses
 
-
-
     def loss_on_batch(self, x, step_in_epoch=0):
-        batch_size = x.shape[1]
 
-        z, mu, sigma_hat = self.model.encoder(x)
-
-        sos = torch.stack(
-            [torch.tensor([0, 0, 1, 0, 0], device=device, dtype=torch.float)]*batch_size).unsqueeze(0)
-        dec_input = torch.cat([sos, x[:-1, :, :]], 0)
-        h0, c0 = torch.split(
-            torch.tanh(
-                self.model.decoder.fc_hc(z)
-                ),
-            self.model.decoder.dec_hidden_size, 1)
-        hidden_cell = (h0.unsqueeze(0).contiguous(),
-                       c0.unsqueeze(0).contiguous())
-
-        (pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy,
-         q), _ = self.model.decoder(dec_input, z, hidden_cell)
+        (mu, sigma_hat), (pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy,
+         q), _ = self.model.forward_batch(x)
 
         zero_out = 1 - x[:, :, 4]
         Ls = ls(x[:, :, 0], x[:, :, 1],
@@ -186,15 +149,34 @@ class Trainer():
         self.enc_opt.load_state_dict(checkpoint['encoder_opt'])
         self.dec_opt.load_state_dict(checkpoint['decoder_opt'])
 
+    def tensorboard_losses(self, losses: list, msg="train"):
+        self.tb_writer.add_scalar(f"{msg}/_Loss_", losses[0], self.epoch)
+        self.tb_writer.add_scalar(f"{msg}/Ls", losses[1], self.epoch)
+        self.tb_writer.add_scalar(f"{msg}/Lp", losses[2], self.epoch)
+        self.tb_writer.add_scalar(f"{msg}/Lr", losses[3], self.epoch)
+        self.tb_writer.add_scalar(f"{msg}/Lkl", losses[4], self.epoch)
+        self.tb_writer.add_scalar(f"{msg}/weighted_Lkl", losses[5], self.epoch)
+        self.tb_writer.add_scalars(f"{msg}/tradeoff", {'Lkl': losses[4], 'Lr': losses[3]}, self.epoch)
+
+    def tensorboard_reconstruction(self, orig, recon):
+        # self.tb_writer.add_text(
+        #     'reconstruction/original', text_string="", global_step=self.epoch)
+        self.tb_writer.add_image(
+            "reconstruction/original", strokes2rgb(orig), self.epoch)
+
+        # self.tb_writer.add_text(
+        #     'reconstruction/prediction', str(recon), self.epoch)
+        self.tb_writer.add_image(
+            "reconstruction/prediction", strokes2rgb(recon), self.epoch)
+        self.tb_writer.flush()
 
 def ls(x, y, pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, zero_out):
     Nmax = x.shape[0]
     batch_size = x.shape[1]
 
-    pdf_val = torch.sum(pi * pdf_2d_normal(x, y, mu_x, mu_y,
-                                           sigma_x, sigma_y, rho_xy), dim=2)
+    pdf_val = torch.clip(torch.sum(pi * pdf_2d_normal(x, y, mu_x, mu_y, sigma_x, sigma_y, rho_xy), dim=2), min=1e-5)
 
-    return -torch.sum(zero_out * torch.log(pdf_val + 1e-5)) \
+    return -torch.sum(zero_out * torch.log(pdf_val)) \
         / (Nmax * batch_size)
 
 
