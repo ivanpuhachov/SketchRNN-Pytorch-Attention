@@ -12,7 +12,6 @@ class SketchRNN():
         self.decoder = Decoder(dec_hidden_size, Nz, M,
                                tau, dropout=dropout).to(device)
 
-    # TODO batch reconstruction
     def reconstruct(self, S):
         self.encoder.eval()
         self.decoder.eval()
@@ -40,6 +39,10 @@ class SketchRNN():
             return output
 
     def sample_next(self, pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q):
+        """
+        Samples the next point from gaussian mixture model, using bivatiate normal
+        (see https://www.probabilitycourse.com/chapter5/5_3_2_bivariate_normal_dist.php)
+        """
         pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q =\
             pi[0, 0, :], mu_x[0, 0, :], mu_y[0, 0, :], sigma_x[0,
                                                                0, :], sigma_y[0, 0, :], rho_xy[0, 0, :], q[0, 0, :]
@@ -63,6 +66,23 @@ class SketchRNN():
 
         return torch.cat([xy, p], dim=1).unsqueeze(0)
 
+    def forward_batch(self, x):
+        batch_size = x.shape[1]
+        z, mu, sigma_hat = self.encoder(x)
+
+        sos = torch.stack(
+            [torch.tensor([0, 0, 1, 0, 0], device=device, dtype=torch.float)] * batch_size).unsqueeze(0)
+        dec_input = torch.cat([sos, x[:-1, :, :]], 0)
+        h0, c0 = torch.split(
+            torch.tanh(
+                self.decoder.fc_hc(z)
+            ),
+            self.decoder.dec_hidden_size, 1)
+        hidden_cell = (h0.unsqueeze(0).contiguous(),
+                       c0.unsqueeze(0).contiguous())
+
+        (pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q), (h, c) = self.decoder(dec_input, z, hidden_cell)
+        return (mu, sigma_hat), (pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q), (h, c)
 
 class Encoder(nn.Module):
     def __init__(self, enc_hidden_size=512, Nz=128, dropout=0.1):
@@ -110,6 +130,6 @@ class Decoder(nn.Module):
         pi = F.softmax(pi_hat, dim=2)
         sigma_x = torch.exp(sigma_x_hat) * np.sqrt(self.tau)
         sigma_y = torch.exp(sigma_y_hat) * np.sqrt(self.tau)
-        rho_xy = torch.tanh(rho_xy)
+        rho_xy = torch.clip(torch.tanh(rho_xy), min=-1+1e-6, max=1-1e-6)
         q = F.softmax(q_hat, dim=2)
         return (pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q), (h, c)
