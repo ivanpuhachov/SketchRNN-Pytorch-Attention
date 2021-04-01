@@ -61,7 +61,7 @@ class Trainer():
                 self.save_checkpoint(path=self.checkpoint_dir+f"best_model.pth",
                                      msg={"epoch": epoch, "losses": losses, "val_losses": val_losses})
 
-            if e % 10 == 9:
+            if e % 100 == 99:
                 self.save_checkpoint(path=self.checkpoint_dir + f"checkpoint_{e}.pth",
                                      msg={"epoch": epoch, "losses": losses, "val_losses": val_losses})
 
