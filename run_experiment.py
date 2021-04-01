@@ -42,7 +42,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch", "-b", type=int, default=500, help="batch_size")
     parser.add_argument("--enc_h", type=int, default=256, help="encoder hidden size")
     parser.add_argument("--dec_h", type=int, default=512, help="decoder hidden size")
-    parser.add_argument("--M", type=int, default=50, help="number of GMMs in the output")
+    parser.add_argument("--M", type=int, default=20, help="number of GMMs in the output")
     parser.add_argument("--Nz", type=int, default=128, help="latent vector size")
     parser.add_argument("--lr", type=float, default=0.0001, help="learning rate")
     parser.add_argument("--R", type=float, default=0.9999, help="hyperparameter R (annealing rate)")
@@ -72,7 +72,7 @@ if __name__ == "__main__":
     print("\n-- logs and backup  --")
     log_dir = "logs/" + datetime.now().strftime("%m.%d--%H") + f"_b{batch_size}_n{n_epochs}/"
     log_dir, checkpoint_dir, tensorboard_dir = create_logs_folder(folder_log=log_dir)
-    print(f"tensorboard --logdir={tensorboard_dir}")
+    print(f"\n\ntensorboard --logdir={tensorboard_dir}")
 
     with open(log_dir + "cli_args.txt", 'w') as f:
         json.dump(args.__dict__, f)
