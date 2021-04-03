@@ -84,6 +84,7 @@ class SketchRNN():
         (pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q), (h, c) = self.decoder(dec_input, z, hidden_cell)
         return (mu, sigma_hat), (pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q), (h, c)
 
+
 class Encoder(nn.Module):
     def __init__(self, enc_hidden_size=512, Nz=128, dropout=0.1):
         super().__init__()
@@ -117,19 +118,32 @@ class Decoder(nn.Module):
         self.fc_y = nn.Linear(dec_hidden_size, 6*M+3)
         self.tau = tau
 
-    def forward(self, x, z, hidden_cell=None):
-        Nmax = x.shape[0]
-        zs = torch.stack([z] * Nmax)
-        dec_input = torch.cat([x, zs], 2)
-
-        o, (h, c) = self.decoder_rnn(dec_input, hidden_cell)
+    def lstm_prediction(self, inp, hidden_cell):
+        """
+        This function makes LSTM forward pass and returns y = self.fc_y(o)
+        :param inp: tensor of size (seq_len, batch_size, input_size)
+        :param hidden_cell: (h,c) - hidden cell to start with, shape (batch_size, self.dec_hidden_size)
+        :return: (y, (h, c)), y - GMM params concated, (h,c) - hidden cell
+        """
+        o, (h, c) = self.decoder_rnn(inp, hidden_cell)
         y = self.fc_y(o)
+        return y, (h, c)
 
+    def extract_params(self, y):
         pi_hat, mu_x, mu_y, sigma_x_hat, sigma_y_hat, rho_xy, q_hat = torch.split(
             y, self.M, 2)
         pi = F.softmax(pi_hat, dim=2)
         sigma_x = torch.exp(sigma_x_hat) * np.sqrt(self.tau)
         sigma_y = torch.exp(sigma_y_hat) * np.sqrt(self.tau)
-        rho_xy = torch.clip(torch.tanh(rho_xy), min=-1+1e-6, max=1-1e-6)
+        rho_xy = torch.clip(torch.tanh(rho_xy), min=-1 + 1e-6, max=1 - 1e-6)
         q = F.softmax(q_hat, dim=2)
-        return (pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q), (h, c)
+        return pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q
+
+    def forward(self, x, z, hidden_cell=None):
+        Nmax = x.shape[0]
+        zs = torch.stack([z] * Nmax)
+        dec_input = torch.cat([x, zs], 2)
+
+        y, (h, c) = self.lstm_prediction(inp=dec_input, hidden_cell=hidden_cell)
+
+        return self.extract_params(y), (h, c)

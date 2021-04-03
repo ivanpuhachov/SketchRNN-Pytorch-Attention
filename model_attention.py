@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from model import SketchRNN
+from model import SketchRNN, Encoder, Decoder
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -12,8 +12,41 @@ class SketchRNNAttention(SketchRNN):
         self.encoder = EncoderAttention(enc_hidden_size, Nz, dropout=dropout).to(device)
         self.decoder = DecoderAttention(dec_hidden_size, Nz, M, tau, dropout=dropout).to(device)
 
+    def reconstruct(self, S):
+        self.encoder.eval()
+        self.decoder.eval()
+        with torch.no_grad():
+            Nmax = S.shape[0]
+            batch_size = S.shape[1]
+            assert (batch_size==1)
+            s_i = torch.stack(
+                [torch.tensor([0, 0, 1, 0, 0], device=device, dtype=torch.float)] * batch_size, dim=0).unsqueeze(0)
+            out_points = s_i
+            z, _, _ = self.encoder(S)
+            z = z.unsqueeze(0)
+            h0, c0 = torch.split(torch.tanh(self.decoder.fc_hc(z)),
+                                 self.decoder.dec_hidden_size, 2)
+            hidden_cell = (h0.contiguous(),
+                           c0.contiguous())
+            for i in range(Nmax):
+                attention_context = self.decoder.compute_masked_attention_context(out_points)
+                last_step_context = attention_context[-1].unsqueeze(0)
+                lstm_input = torch.cat([s_i, z, last_step_context], 2)
+                y, hidden_cell = self.decoder.lstm_prediction(inp=lstm_input, hidden_cell=hidden_cell)
+                pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q = self.decoder.extract_params(y)
+                # (pi, mu_x, mu_y, sigma_x, sigma_y,
+                #  rho_xy, q), hidden_cell = self.decoder(s_i, z, hidden_cell)
+                s_i = self.sample_next(
+                    pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q)
+                out_points = torch.cat([out_points, s_i], dim=0)
+                if out_points[-1, 0, 4] == 1:
+                    break
 
-class EncoderAttention(nn.Module):
+            out_points = out_points[1:, :, :]  # remove dummy
+            return out_points
+
+
+class EncoderAttention(Encoder):
     def __init__(self, enc_hidden_size=512, Nz=128, dropout=0.1, seq_len=200):
         super().__init__()
         self.input_size = 5
@@ -50,47 +83,45 @@ class EncoderAttention(nn.Module):
         return z, mu, sigma_hat
 
 
-class DecoderAttention(nn.Module):
-    def __init__(self, dec_hidden_size=2048, Nz=128, M=20, tau=1.0, dropout=0.1, Ne=20):
+class DecoderAttention(Decoder):
+    def __init__(self, dec_hidden_size=2048, Nz=128, M=20, tau=1.0, dropout=0.1, Ne=64):
         super().__init__()
         self.M = M
         self.Nz = Nz
         self.Ne = Ne
         self.dec_hidden_size = dec_hidden_size
         self.fc_hc = nn.Linear(Nz, 2*dec_hidden_size)
-        self.decoder_rnn = nn.LSTM(Nz+5, dec_hidden_size, dropout=dropout)
-        self.decoder_cell = nn.LSTMCell(input_size=Nz+5, hidden_size=self.dec_hidden_size)
+        self.decoder_rnn = nn.LSTM(5+Nz+Ne, dec_hidden_size, dropout=dropout)
         self.fc_y = nn.Linear(dec_hidden_size, 6*M+3)
         self.tau = tau
+        self.attention_key = nn.Linear(5, self.Ne)
+        self.attention_query = nn.Linear(5, self.Ne)
+        self.attention_value = nn.Linear(5, self.Ne)
         self.out_to_emb = nn.Linear(in_features=dec_hidden_size, out_features=Ne)
 
+    def compute_masked_attention_context(self, x):
+        seq_len, batch_size, emb_size = x.shape
+        keys = self.attention_key(x).permute(1, 0, 2)  # now it is (batch_size, seq_len, Ne)
+        queries = self.attention_query(x).permute(1, 2, 0)  # now it is (batch_size, Ne, seq_len)
+        values = self.attention_value(x).permute(1, 2, 0)  # now it is (batch_size, Ne, seq_len)
+
+        dot_product = torch.bmm(keys, queries)
+        # scale values
+        dot_product /= np.sqrt(self.Ne)
+        # masking attention weights
+        mask = torch.tril(torch.ones((seq_len, seq_len), requires_grad=False, dtype=torch.bool), diagonal=-1)
+        dot_product[:, mask] = float('-inf')
+        attention_scores = torch.nn.Softmax(dim=1)(dot_product)
+        context = torch.bmm(values, attention_scores).permute(2, 0, 1)
+        assert (context.shape == (seq_len, batch_size, self.Ne))
+        return context
+
     def forward(self, x, z, hidden_cell=None):
-        Nmax, batch_size, input_size = x.shape
-        zs = torch.stack([z] * Nmax)
-        dec_input = torch.cat([x, zs], 2)
+        seq_len, batch_size, input_size = x.shape
+        zs = torch.stack([z] * seq_len)
+        attention_context = self.compute_masked_attention_context(x)
+        lstm_input = torch.cat([x, zs, attention_context], 2)
 
-        if hidden_cell is not None:
-            h, c = hidden_cell
-            if len(h.shape) > 2:
-                h.squeeze_(0)
-                c.squeeze_(0)
-        else:
-            h, c = torch.zeros(size=(batch_size, self.hidden_size)), torch.zeros(size=(batch_size, self.dec_hidden_size))
+        y, (h, c) = self.lstm_prediction(inp=lstm_input, hidden_cell=hidden_cell)
 
-        outs = list()
-        for i in range(Nmax):
-            h, c = self.decoder_cell(dec_input[i], (h, c))
-            outs.append(h)
-
-        # o, (h, c) = self.decoder_rnn(dec_input, hidden_cell)
-        o = torch.stack(outs)
-        y = self.fc_y(o)
-
-        pi_hat, mu_x, mu_y, sigma_x_hat, sigma_y_hat, rho_xy, q_hat = torch.split(
-            y, self.M, 2)
-        pi = F.softmax(pi_hat, dim=2)
-        sigma_x = torch.exp(sigma_x_hat) * np.sqrt(self.tau)
-        sigma_y = torch.exp(sigma_y_hat) * np.sqrt(self.tau)
-        rho_xy = torch.clip(torch.tanh(rho_xy), min=-1+1e-6, max=1-1e-6)
-        q = F.softmax(q_hat, dim=2)
-        return (pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q), (h, c)
+        return self.extract_params(y), (h, c)
