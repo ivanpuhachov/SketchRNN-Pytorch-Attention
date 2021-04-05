@@ -39,7 +39,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train SketchRNN!")
     parser.add_argument("--dataset", "-d", default="data/owl.npz")
     parser.add_argument("--n_epochs", "-n", type=int, default=1, help="number of training epochs")
-    parser.add_argument("--batch", "-b", type=int, default=500, help="batch_size")
+    parser.add_argument("--batch", "-b", type=int, default=100, help="batch_size")
     parser.add_argument("--enc_h", type=int, default=256, help="encoder hidden size")
     parser.add_argument("--dec_h", type=int, default=512, help="decoder hidden size")
     parser.add_argument("--M", type=int, default=20, help="number of GMMs in the output")
@@ -102,7 +102,9 @@ if __name__ == "__main__":
     trainer = Trainer(model, data_loader=dataloader, val_loader=valloader, tb_writer=tb_writer,
                       checkpoint_dir=checkpoint_dir, learning_rate=learning_rate, R=model_R)
 
+    # trainer.load_from_checkpoint("logs/04.02--23_b100_n1200/checkpoints/checkpoint_699.pth")
+
     print("\n-- training --")
 
-    trainer.train(epoch=n_epochs)
+    trainer.train(n_epochs=n_epochs)
     tb_writer.close()

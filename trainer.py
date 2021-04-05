@@ -4,11 +4,13 @@ import torch.optim as optim
 from utils import strokes2rgb
 from tqdm import tqdm
 import os
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Trainer():
-    def __init__(self, model, data_loader, val_loader, tb_writer, checkpoint_dir="logs/", learning_rate=0.0001, wkl=1.0, eta_min=0.0, R=0.99999, KLmin=0.2, clip_val=1.0):
+    def __init__(self, model, data_loader, val_loader, tb_writer, checkpoint_dir="logs/", learning_rate=0.0001, wkl=1.0,
+                 eta_min=0.0, R=0.99999, KLmin=0.2, clip_val=1.0):
         self.model = model
         self.data_loader = data_loader
         self.validation_loader = val_loader
@@ -29,9 +31,9 @@ class Trainer():
         self.step_per_epoch = len(
             self.data_loader.dataset) / self.data_loader.batch_size
 
-    def train(self, epoch):
+    def train(self, n_epochs):
         self.save_checkpoint(path=self.checkpoint_dir + "init.pth", msg=dict())
-        for e in range(epoch):
+        for e in range(n_epochs):
             print(f"\n - Training {e}")
             x = None
             step_in_epoch = 0
@@ -56,14 +58,18 @@ class Trainer():
 
             # Save model
             if self.mininum_loss > val_losses[0]:
-                print (f"New best: {val_losses[0]}")
+                print(f"New best: {val_losses[0]}")
                 self.mininum_loss = val_losses[0]
-                self.save_checkpoint(path=self.checkpoint_dir+f"best_model.pth",
-                                     msg={"epoch": epoch, "losses": losses, "val_losses": val_losses})
+                self.save_checkpoint(path=self.checkpoint_dir + "best_model.pth",
+                                     msg={"epoch": self.epoch, "losses": losses, "val_losses": val_losses})
+
+            if e > 0:
+                self.save_checkpoint(path=self.checkpoint_dir + "checkpoint_last.pth",
+                                     msg={"epoch": self.epoch, "losses": losses, "val_losses": val_losses})
 
             if e % 100 == 99:
                 self.save_checkpoint(path=self.checkpoint_dir + f"checkpoint_{e}.pth",
-                                     msg={"epoch": epoch, "losses": losses, "val_losses": val_losses})
+                                     msg={"epoch": self.epoch, "losses": losses, "val_losses": val_losses})
 
             # Reconstruction plots
             x = x[:, 0, :].unsqueeze(1)
@@ -113,7 +119,7 @@ class Trainer():
     def loss_on_batch(self, x, step_in_epoch=0):
 
         (mu, sigma_hat), (pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy,
-         q), _ = self.model.forward_batch(x)
+                          q), _ = self.model.forward_batch(x)
 
         zero_out = 1 - x[:, :, 4]
         Ls = ls(x[:, :, 0], x[:, :, 1],
@@ -124,7 +130,7 @@ class Trainer():
         Lkl = lkl(mu, sigma_hat, self.KLmin)
 
         step = step_in_epoch + self.step_per_epoch * self.epoch
-        eta = 1.0 - (1.0 - self.eta_min) * self.R**step
+        eta = 1.0 - (1.0 - self.eta_min) * self.R ** step
         weighted_Lkl = self.wkl * eta * Lkl
         loss = Lr + weighted_Lkl
         return loss, Ls, Lp, Lr, Lkl, weighted_Lkl
@@ -136,6 +142,11 @@ class Trainer():
             'decoder_state_dict': self.model.decoder.state_dict(),
             'encoder_opt': self.enc_opt.state_dict(),
             'decoder_opt': self.dec_opt.state_dict(),
+            'trainer_epoch': self.epoch,
+            'trainer_wkl': self.wkl,
+            'trainer_clip_val': self.clip_val,
+            'trainer_klmin': self.KLmin,
+            'trainer_R': self.R,
             **msg
         }, path)
 
@@ -148,6 +159,7 @@ class Trainer():
         self.model.decoder.load_state_dict(checkpoint['decoder_state_dict'])
         self.enc_opt.load_state_dict(checkpoint['encoder_opt'])
         self.dec_opt.load_state_dict(checkpoint['decoder_opt'])
+        self.epoch = checkpoint['trainer_epoch']
 
     def tensorboard_losses(self, losses: list, msg="train"):
         self.tb_writer.add_scalar(f"{msg}/_Loss_", losses[0], self.epoch)
@@ -170,6 +182,7 @@ class Trainer():
             "reconstruction/prediction", strokes2rgb(recon), self.epoch)
         self.tb_writer.flush()
 
+
 def ls(x, y, pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, zero_out):
     Nmax = x.shape[0]
     batch_size = x.shape[1]
@@ -177,18 +190,18 @@ def ls(x, y, pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, zero_out):
     pdf_val = torch.clip(torch.sum(pi * pdf_2d_normal(x, y, mu_x, mu_y, sigma_x, sigma_y, rho_xy), dim=2), min=1e-5)
 
     return -torch.sum(zero_out * torch.log(pdf_val)) \
-        / (Nmax * batch_size)
+           / (Nmax * batch_size)
 
 
 def lp(p1, p2, p3, q):
     p = torch.cat([p1.unsqueeze(2), p2.unsqueeze(2), p3.unsqueeze(2)], dim=2)
-    return -torch.sum(p*torch.log(q + 1e-4)) \
-        / (q.shape[0] * q.shape[1])
+    return -torch.sum(p * torch.log(q + 1e-4)) \
+           / (q.shape[0] * q.shape[1])
 
 
 def lkl(mu, sigma, KLmin=0.2):
-    lkl = -torch.sum(1+sigma - mu**2 - torch.exp(sigma)) \
-        / (2. * mu.shape[0] * mu.shape[1])
+    lkl = -torch.sum(1 + sigma - mu ** 2 - torch.exp(sigma)) \
+          / (2. * mu.shape[0] * mu.shape[1])
 
     KLmin = torch.tensor(KLmin, device=device)
 
@@ -202,11 +215,11 @@ def pdf_2d_normal(x, y, mu_x, mu_y, sigma_x, sigma_y, rho_xy):
     norm2 = y - mu_y
     sxsy = sigma_x * sigma_y
 
-    z = (norm1/(sigma_x + 1e-4))**2 + (norm2/(sigma_y + 1e-4))**2 -\
+    z = (norm1 / (sigma_x + 1e-4)) ** 2 + (norm2 / (sigma_y + 1e-4)) ** 2 - \
         (2. * rho_xy * norm1 * norm2 / (sxsy + 1e-4))
 
-    neg_rho = 1 - rho_xy**2
-    result = torch.exp(-z/(2.*neg_rho + 1e-5))
+    neg_rho = 1 - rho_xy ** 2
+    result = torch.exp(-z / (2. * neg_rho + 1e-5))
     denom = 2. * np.pi * sxsy * torch.sqrt(neg_rho + 1e-5) + 1e-5
     result = result / denom
     return result
