@@ -83,23 +83,15 @@ class EncoderAttention(Encoder):
         return z, mu, sigma_hat
 
 
-class DecoderAttention(Decoder):
-    def __init__(self, dec_hidden_size=2048, Nz=128, M=20, tau=1.0, dropout=0.1, Ne=64):
-        super().__init__()
-        self.M = M
-        self.Nz = Nz
+class AttentionHead(nn.Module):
+    def __init__(self, Ne=64):
+        super(AttentionHead, self).__init__()
         self.Ne = Ne
-        self.dec_hidden_size = dec_hidden_size
-        self.fc_hc = nn.Linear(Nz, 2*dec_hidden_size)
-        self.decoder_rnn = nn.LSTM(5+Nz+Ne, dec_hidden_size, dropout=dropout)
-        self.fc_y = nn.Linear(dec_hidden_size, 6*M+3)
-        self.tau = tau
         self.attention_key = nn.Linear(5, self.Ne)
         self.attention_query = nn.Linear(5, self.Ne)
         self.attention_value = nn.Linear(5, self.Ne)
-        self.out_to_emb = nn.Linear(in_features=dec_hidden_size, out_features=Ne)
 
-    def compute_masked_attention_context(self, x):
+    def forward(self, x):
         seq_len, batch_size, emb_size = x.shape
         keys = self.attention_key(x).permute(1, 0, 2)  # now it is (batch_size, seq_len, Ne)
         queries = self.attention_query(x).permute(1, 2, 0)  # now it is (batch_size, Ne, seq_len)
@@ -114,6 +106,31 @@ class DecoderAttention(Decoder):
         attention_scores = torch.nn.Softmax(dim=1)(dot_product)
         context = torch.bmm(values, attention_scores).permute(2, 0, 1)
         assert (context.shape == (seq_len, batch_size, self.Ne))
+        return context
+
+
+class DecoderAttention(Decoder):
+    def __init__(self, dec_hidden_size=2048, Nz=128, M=20, tau=1.0, dropout=0.1, Ne=64, n_attention_heads=2):
+        super().__init__()
+        self.M = M
+        self.Nz = Nz
+        self.Ne = Ne
+        self.dec_hidden_size = dec_hidden_size
+        self.fc_hc = nn.Linear(Nz, 2*dec_hidden_size)
+        self.decoder_rnn = nn.LSTM(5+Nz+n_attention_heads*Ne, dec_hidden_size, dropout=dropout)
+        self.fc_y = nn.Linear(dec_hidden_size, 6*M+3)
+        self.tau = tau
+        self.n_attention_heads = n_attention_heads
+        self.attention_heads = nn.ModuleList([
+            AttentionHead(Ne=self.Ne)
+            for _ in range(self.n_attention_heads)
+        ])
+        self.out_to_emb = nn.Linear(in_features=dec_hidden_size, out_features=Ne)
+
+    def compute_masked_attention_context(self, x):
+        all_contexts = [head(x) for head in self.attention_heads]
+        context = torch.cat(all_contexts, dim=2)
+        assert (context.shape[2]==self.n_attention_heads*self.Ne)
         return context
 
     def forward(self, x, z, hidden_cell=None):
