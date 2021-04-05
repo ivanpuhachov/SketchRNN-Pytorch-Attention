@@ -2,7 +2,26 @@ import numpy as np
 import torch
 
 
-class To5vStrokes():
+class AugmentOffsets(object):
+    def __init__(self, minscale=0.9, maxscale=1.1):
+        self.minscale = minscale
+        self.maxscale = maxscale
+
+    def __call__(self, sample):
+        """
+        simple data augmentation by multiplying the offset columns (∆x,∆y) by two IID random factors chosen uniformly
+        between 0.90 and 1.10
+        :param sample:
+        :return:
+        """
+        scale_x = np.random.uniform(self.minscale, self.maxscale)
+        scale_y = np.random.uniform(self.minscale, self.maxscale)
+        sample[0][:, 0] *= scale_x
+        sample[0][:, 1] *= scale_y
+        return sample
+
+
+class To5vStrokes(object):
     def __init__(self, max_len=200):
         self.max_len = max_len
 
@@ -29,23 +48,29 @@ class V5Dataset(torch.utils.data.Dataset):
         self.data = [x.astype('float32') for x in data_array]
         self.true_lengths = [x.shape[0] for x in data_array]
         if pre_scaling:
+            # normalize strokes
             scale = self.scaling_factor(self.data)
             self.data = [self.scale_stroke(x, scale) for x in self.data]
-        if transform is not None:
-            for i in range(len(self.data)):
-                self.data[i] = transform(self.data[i])
+        transformTov5 = To5vStrokes()
+        for i in range(len(self.data)):
+            self.data[i] = transformTov5(self.data[i])
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, index):
-        return self.data[index], self.true_lengths[index]
+        sample = (self.data[index], self.true_lengths[index])
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample
 
     def scaling_factor(self, datalist):
+        # compute joint std
         data = np.concatenate([S for S in datalist])
         return np.std(data[:, 0:2])
 
     def scale_stroke(self, x, scale):
+        # scale both delta_x, delta_y by scale
         x = np.float32(x)
         x[:, 0:2] /= scale
         return x
@@ -53,7 +78,8 @@ class V5Dataset(torch.utils.data.Dataset):
 
 def load_quickdraw_datasets(path_to_npz):
     a = np.load(path_to_npz, encoding='latin1', allow_pickle=True)
-    trainset = V5Dataset(a['train'], To5vStrokes(), pre_scaling=True)
+
+    trainset = V5Dataset(a['train'], pre_scaling=True, transform=AugmentOffsets())
     testset = V5Dataset(a['test'], To5vStrokes(), pre_scaling=True)
     valset = V5Dataset(a['valid'], To5vStrokes(), pre_scaling=True)
 
