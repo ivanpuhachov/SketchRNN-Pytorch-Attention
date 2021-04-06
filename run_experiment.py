@@ -31,6 +31,7 @@ def create_logs_folder(folder_log):
     os.mkdir(folder_log)
     os.mkdir(folder_log + "checkpoints/")
     os.mkdir(folder_log + "tensorboard/")
+    os.mkdir(folder_log + "plots/")
     backup_training_files(folder_log)
     return folder_log, folder_log + "checkpoints/", folder_log + "tensorboard/"
 
@@ -97,10 +98,10 @@ if __name__ == "__main__":
     print("\n-- creating model --")
 
     model = SketchRNNAttention(enc_hidden_size=model_enc_h, dec_hidden_size=model_dec_h,
-                               Nz=model_Nz, M=model_M, dropout=0)
+                               Nz=model_Nz, M=model_M, dropout=0.1)
 
     trainer = Trainer(model, data_loader=dataloader, val_loader=valloader, tb_writer=tb_writer,
-                      checkpoint_dir=checkpoint_dir, learning_rate=learning_rate, R=model_R)
+                      log_dir=log_dir, learning_rate=learning_rate, R=model_R)
 
     # trainer.load_from_checkpoint("logs/04.02--23_b100_n1200/checkpoints/checkpoint_699.pth")
 

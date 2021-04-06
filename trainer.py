@@ -1,15 +1,16 @@
 import numpy as np
 import torch
 import torch.optim as optim
-from utils import strokes2rgb
+from drawing import Drawing
 from tqdm import tqdm
 import os
+import matplotlib.pyplot as plt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Trainer():
-    def __init__(self, model, data_loader, val_loader, tb_writer, checkpoint_dir="logs/", learning_rate=0.0001, wkl=1.0,
+    def __init__(self, model, data_loader, val_loader, tb_writer, log_dir="logs/", learning_rate=0.0001, wkl=1.0,
                  eta_min=0.0, R=0.99999, KLmin=0.2, clip_val=1.0):
         self.model = model
         self.data_loader = data_loader
@@ -19,8 +20,10 @@ class Trainer():
             self.model.encoder.parameters(), lr=learning_rate)
         self.dec_opt = optim.Adam(
             self.model.decoder.parameters(), lr=learning_rate)
-        assert os.path.exists(checkpoint_dir)
-        self.checkpoint_dir = checkpoint_dir
+        self.checkpoint_dir = log_dir + "checkpoints/"
+        assert os.path.exists(self.checkpoint_dir)
+        self.plots_dir = log_dir + "plots/"
+        assert os.path.exists(self.plots_dir)
         self.wkl = wkl
         self.clip_val = clip_val
         self.epoch = 0
@@ -72,11 +75,15 @@ class Trainer():
                                      msg={"epoch": self.epoch, "losses": losses, "val_losses": val_losses})
 
             # Reconstruction plots
-            x = x[:, 0, :].unsqueeze(1)
-            original = x
-            recon = self.model.reconstruct(x)
-            self.tensorboard_reconstruction(original, recon)
-
+            try:
+                x = x[:, 0, :].unsqueeze(1)
+                original = x
+                recon = self.model.reconstruct(x)
+                self.tensorboard_reconstruction(original, recon)
+                self.save_reconstruction(original, recon)
+            except:
+                print("Error in reconstruction")
+                pass
             print(f"- Done {e}")
 
     def train_on_batch(self, x, step_in_epoch=0):
@@ -174,14 +181,27 @@ class Trainer():
         # self.tb_writer.add_text(
         #     'reconstruction/original', text_string="", global_step=self.epoch)
         self.tb_writer.add_image(
-            "reconstruction/original", strokes2rgb(orig), self.epoch)
+            "reconstruction/original", Drawing.from_tensor_prediction(orig).tensorboard_plot(), self.epoch)
 
         # self.tb_writer.add_text(
         #     'reconstruction/prediction', str(recon), self.epoch)
         self.tb_writer.add_image(
-            "reconstruction/prediction", strokes2rgb(recon), self.epoch)
+            "reconstruction/prediction", Drawing.from_tensor_prediction(recon).tensorboard_plot(), self.epoch)
         self.tb_writer.flush()
 
+    def save_reconstruction(self, orig, recon):
+        original = Drawing.from_tensor_prediction(orig)
+        reconstruct = Drawing.from_tensor_prediction(recon)
+        plt.figure(figsize=(7, 4))
+        plt.suptitle(f"Epoch {self.epoch}")
+        plt.subplot(1, 2, 1)
+        plt.title("orig")
+        original.render_image(show=False)
+        plt.subplot(1, 2, 2)
+        plt.title("recon")
+        reconstruct.render_image(show=False)
+        plt.savefig(self.plots_dir + f"reconstruction_{self.epoch}.png", bbox_inches='tight', dpi=150)
+        plt.close()
 
 def ls(x, y, pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, zero_out):
     Nmax = x.shape[0]
