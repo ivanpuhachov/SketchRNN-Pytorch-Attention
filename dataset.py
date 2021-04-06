@@ -21,7 +21,7 @@ class AugmentOffsets(object):
         return sample
 
 
-class To5vStrokes(object):
+class To5vStrokes():
     def __init__(self, max_len=200):
         self.max_len = max_len
 
@@ -80,7 +80,7 @@ def load_quickdraw_datasets(path_to_npz):
     a = np.load(path_to_npz, encoding='latin1', allow_pickle=True)
 
     trainset = V5Dataset(a['train'], pre_scaling=True, transform=AugmentOffsets())
-    testset = V5Dataset(a['test'], To5vStrokes(), pre_scaling=True)
-    valset = V5Dataset(a['valid'], To5vStrokes(), pre_scaling=True)
+    testset = V5Dataset(a['test'], pre_scaling=True)
+    valset = V5Dataset(a['valid'], pre_scaling=True)
 
     return trainset, testset, valset
