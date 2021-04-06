@@ -133,10 +133,10 @@ class Decoder(nn.Module):
         pi_hat, mu_x, mu_y, sigma_x_hat, sigma_y_hat, rho_xy, q_hat = torch.split(
             y, self.M, 2)
         pi = F.softmax(pi_hat, dim=2)
-        sigma_x = torch.exp(sigma_x_hat) * np.sqrt(self.tau)
-        sigma_y = torch.exp(sigma_y_hat) * np.sqrt(self.tau)
+        sigma_x = torch.clamp_min(torch.exp(sigma_x_hat) * np.sqrt(self.tau), 1e-6)
+        sigma_y = torch.clamp_min(torch.exp(sigma_y_hat) * np.sqrt(self.tau), 1e-6)
         rho_xy = torch.clip(torch.tanh(rho_xy), min=-1 + 1e-6, max=1 - 1e-6)
-        q = F.softmax(q_hat, dim=2)
+        q = torch.clamp_min(F.softmax(q_hat, dim=2), 1e-6)
         return pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q
 
     def forward(self, x, z, hidden_cell=None):
