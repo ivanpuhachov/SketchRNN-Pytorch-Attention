@@ -53,11 +53,10 @@ class Trainer():
 
             # Train losses plot
             print("Training losses: ", losses)
-            self.tensorboard_losses(losses, msg="train")
 
             val_losses = self.validate()
             print("Validation losses: ", val_losses)
-            self.tensorboard_losses(val_losses, msg="val")
+            self.tensorboard_stats(train_losses=losses, val_losses=val_losses)
 
             # Save model
             if self.mininum_loss > val_losses[0]:
@@ -168,6 +167,11 @@ class Trainer():
         self.dec_opt.load_state_dict(checkpoint['decoder_opt'])
         self.epoch = checkpoint['trainer_epoch']
 
+    def tensorboard_stats(self, train_losses: list, val_losses: list):
+        self.tb_writer.add_scalars(f"Loss", {'train': train_losses[0], 'val': val_losses[0]}, self.epoch)
+        self.tensorboard_losses(losses=train_losses, msg="train")
+        self.tensorboard_losses(losses=val_losses, msg="val")
+
     def tensorboard_losses(self, losses: list, msg="train"):
         self.tb_writer.add_scalar(f"{msg}/_Loss_", losses[0], self.epoch)
         self.tb_writer.add_scalar(f"{msg}/Ls", losses[1], self.epoch)
@@ -175,6 +179,7 @@ class Trainer():
         self.tb_writer.add_scalar(f"{msg}/Lr", losses[3], self.epoch)
         self.tb_writer.add_scalar(f"{msg}/Lkl", losses[4], self.epoch)
         self.tb_writer.add_scalar(f"{msg}/weighted_Lkl", losses[5], self.epoch)
+        self.tb_writer.add_scalar(f"{msg}/w_kl * eta", losses[5] / losses[4], self.epoch)
         self.tb_writer.add_scalars(f"{msg}/tradeoff", {'Lkl': losses[4], 'Lr': losses[3]}, self.epoch)
 
     def tensorboard_reconstruction(self, orig, recon):
