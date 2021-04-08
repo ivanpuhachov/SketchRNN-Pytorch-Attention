@@ -38,7 +38,8 @@ def create_logs_folder(folder_log):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train SketchRNN!")
-    parser.add_argument("--dataset", "-d", default="data/owl.npz")
+    parser.add_argument("--dataset", "-d", default="data/creativebirds.npz")
+    # parser.add_argument("--dataset", "-d", default="data/owl.npz")
     parser.add_argument("--n_epochs", "-n", type=int, default=1, help="number of training epochs")
     parser.add_argument("--batch", "-b", type=int, default=100, help="batch_size")
     parser.add_argument("--enc_h", type=int, default=256, help="encoder hidden size")
