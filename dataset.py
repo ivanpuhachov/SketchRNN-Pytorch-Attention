@@ -45,7 +45,7 @@ class V5Dataset(torch.utils.data.Dataset):
         super().__init__()
         self.transform = transform
         print("Processing data: ", data_array.shape)
-        self.data = [x.astype('float32') for x in data_array]
+        self.data = [x.astype('float32') for x in data_array if len(x)<=200]
         self.true_lengths = [x.shape[0] for x in data_array]
         if pre_scaling:
             # normalize strokes
