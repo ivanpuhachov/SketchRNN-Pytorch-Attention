@@ -61,6 +61,9 @@ class Drawing:
         if show:
             plt.show()
 
+    def plot(self):
+        self.render_image(show=True)
+
     def tensorboard_plot(self):
         self.render_image(show=False)
         canvas = plt.get_current_fig_manager().canvas
