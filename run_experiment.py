@@ -40,6 +40,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train SketchRNN!")
     parser.add_argument("--dataset", "-d", default="data/creativebirds.npz")
     # parser.add_argument("--dataset", "-d", default="data/owl.npz")
+    # parser.add_argument("--dataset", "-d", default="data/owl_small.npz")
     parser.add_argument("--n_epochs", "-n", type=int, default=1, help="number of training epochs")
     parser.add_argument("--batch", "-b", type=int, default=100, help="batch_size")
     parser.add_argument("--enc_h", type=int, default=256, help="encoder hidden size")
@@ -50,6 +51,7 @@ if __name__ == "__main__":
     parser.add_argument("--R", type=float, default=0.9999, help="hyperparameter R (annealing rate)")
     parser.add_argument("--seed", type=int, default=23, help='random seed')
     parser.add_argument("--workers", type=int, default=8, help='num_workers to use')
+    parser.add_argument('--attention', dest='attention', default=False, action='store_true', help='use model with attention')
 
     print("\n-- parsing args --")
     args = parser.parse_args()
@@ -68,6 +70,7 @@ if __name__ == "__main__":
     model_Nz = args.Nz
     model_R = args.R
     num_workers = args.workers
+    use_attention = args.attention
 
     assert (os.path.exists(dataset_path))
 
@@ -98,8 +101,12 @@ if __name__ == "__main__":
 
     print("\n-- creating model --")
 
-    model = SketchRNNAttention(enc_hidden_size=model_enc_h, dec_hidden_size=model_dec_h,
-                               Nz=model_Nz, M=model_M, dropout=0.1)
+    if use_attention:
+        model = SketchRNNAttention(enc_hidden_size=model_enc_h, dec_hidden_size=model_dec_h,
+                                   Nz=model_Nz, M=model_M, dropout=0.1)
+    else:
+        model = SketchRNN(enc_hidden_size=model_enc_h, dec_hidden_size=model_dec_h,
+                                       Nz=model_Nz, M=model_M, dropout=0.1)
 
     trainer = Trainer(model, data_loader=dataloader, val_loader=valloader, tb_writer=tb_writer,
                       log_dir=log_dir, learning_rate=learning_rate, R=model_R)
