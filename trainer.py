@@ -10,8 +10,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Trainer():
-    def __init__(self, model, data_loader, val_loader, tb_writer, log_dir="logs/", learning_rate=0.0001, wkl=1.0,
-                 eta_min=0.0, R=0.99999, KLmin=0.2, clip_val=1.0):
+    def __init__(self, model, data_loader, val_loader, tb_writer, log_dir="logs/", learning_rate=0.0001, wkl=0.5,
+                 eta_min=0.0, R=0.99999, KLmin=0.2, clip_val=1.0, tau=0.8, log_freq=200):
         self.model = model
         self.data_loader = data_loader
         self.validation_loader = val_loader
@@ -33,6 +33,8 @@ class Trainer():
         self.R = R
         self.step_per_epoch = len(
             self.data_loader.dataset) / self.data_loader.batch_size
+        self.tau = tau
+        self.log_freq = log_freq
 
     def train(self, n_epochs):
         self.save_checkpoint(path=self.checkpoint_dir + "init.pth", msg=dict())
@@ -69,7 +71,7 @@ class Trainer():
                 self.save_checkpoint(path=self.checkpoint_dir + "checkpoint_last.pth",
                                      msg={"epoch": self.epoch, "losses": losses, "val_losses": val_losses})
 
-            if e % 100 == 99:
+            if e % self.log_freq == self.log_freq-1:
                 self.save_checkpoint(path=self.checkpoint_dir + f"checkpoint_{e}.pth",
                                      msg={"epoch": self.epoch, "losses": losses, "val_losses": val_losses})
 
@@ -77,7 +79,7 @@ class Trainer():
             try:
                 x = x[:, 0, :].unsqueeze(1)
                 original = x
-                recon = self.model.reconstruct(x)
+                recon = self.model.reconstruct(x, tau=self.tau)
                 self.tensorboard_reconstruction(original, recon)
                 self.save_reconstruction(original, recon)
             except:

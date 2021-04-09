@@ -9,10 +9,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class SketchRNN():
     def __init__(self, enc_hidden_size=512, dec_hidden_size=2048, Nz=128, M=20, tau=1.0, dropout=0.1):
         self.encoder = Encoder(enc_hidden_size, Nz, dropout=dropout).to(device)
-        self.decoder = Decoder(dec_hidden_size, Nz, M,
-                               tau, dropout=dropout).to(device)
+        self.decoder = Decoder(dec_hidden_size, Nz, M, dropout=dropout).to(device)
 
-    def reconstruct(self, S):
+    def reconstruct(self, S, tau=1.0):
         self.encoder.eval()
         self.decoder.eval()
         with torch.no_grad():
@@ -28,7 +27,7 @@ class SketchRNN():
                            c0.unsqueeze(0).contiguous())
             for i in range(Nmax):
                 (pi, mu_x, mu_y, sigma_x, sigma_y,
-                 rho_xy, q), hidden_cell = self.decoder(s_i, z, hidden_cell)
+                 rho_xy, q), hidden_cell = self.decoder(s_i, z, hidden_cell, tau=tau)
                 s_i = self.sample_next(
                     pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q)
                 output = torch.cat([output, s_i], dim=0)
@@ -109,14 +108,13 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, dec_hidden_size=2048, Nz=128, M=20, tau=1.0, dropout=0.1):
+    def __init__(self, dec_hidden_size=2048, Nz=128, M=20, dropout=0.1):
         super().__init__()
         self.M = M
         self.dec_hidden_size = dec_hidden_size
         self.fc_hc = nn.Linear(Nz, 2*dec_hidden_size)
         self.decoder_rnn = nn.LSTM(Nz+5, dec_hidden_size, dropout=dropout)
         self.fc_y = nn.Linear(dec_hidden_size, 6*M+3)
-        self.tau = tau
 
     def lstm_prediction(self, inp, hidden_cell):
         """
@@ -129,21 +127,22 @@ class Decoder(nn.Module):
         y = self.fc_y(o)
         return y, (h, c)
 
-    def extract_params(self, y):
+    def extract_params(self, y, tau=1.0):
+        assert tau > 0
         pi_hat, mu_x, mu_y, sigma_x_hat, sigma_y_hat, rho_xy, q_hat = torch.split(
             y, self.M, 2)
-        pi = F.softmax(pi_hat, dim=2)
-        sigma_x = torch.clamp_min(torch.exp(sigma_x_hat) * np.sqrt(self.tau), 1e-6)
-        sigma_y = torch.clamp_min(torch.exp(sigma_y_hat) * np.sqrt(self.tau), 1e-6)
+        pi = F.softmax(pi_hat/tau, dim=2)
+        sigma_x = torch.clamp_min(torch.exp(sigma_x_hat) * np.sqrt(tau), 1e-6)
+        sigma_y = torch.clamp_min(torch.exp(sigma_y_hat) * np.sqrt(tau), 1e-6)
         rho_xy = torch.clip(torch.tanh(rho_xy), min=-1 + 1e-6, max=1 - 1e-6)
-        q = torch.clamp_min(F.softmax(q_hat, dim=2), 1e-6)
+        q = torch.clamp_min(F.softmax(q_hat/tau, dim=2), 1e-6)
         return pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q
 
-    def forward(self, x, z, hidden_cell=None):
+    def forward(self, x, z, hidden_cell=None, tau=1.0):
         Nmax = x.shape[0]
         zs = torch.stack([z] * Nmax)
         dec_input = torch.cat([x, zs], 2)
 
         y, (h, c) = self.lstm_prediction(inp=dec_input, hidden_cell=hidden_cell)
 
-        return self.extract_params(y), (h, c)
+        return self.extract_params(y, tau=tau), (h, c)

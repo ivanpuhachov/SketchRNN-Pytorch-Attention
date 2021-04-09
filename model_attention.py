@@ -8,11 +8,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class SketchRNNAttention(SketchRNN):
-    def __init__(self, enc_hidden_size=512, dec_hidden_size=2048, Nz=128, M=20, tau=1.0, dropout=0.1):
+    def __init__(self, enc_hidden_size=512, dec_hidden_size=2048, Nz=128, M=20, dropout=0.1):
         self.encoder = EncoderAttention(enc_hidden_size, Nz, dropout=dropout).to(device)
-        self.decoder = DecoderAttention(dec_hidden_size, Nz, M, tau, dropout=dropout).to(device)
+        self.decoder = DecoderAttention(dec_hidden_size, Nz, M, dropout=dropout).to(device)
 
-    def reconstruct(self, S):
+    def reconstruct(self, S, tau=1.0):
         self.encoder.eval()
         self.decoder.eval()
         with torch.no_grad():
@@ -33,7 +33,7 @@ class SketchRNNAttention(SketchRNN):
                 last_step_context = attention_context[-1].unsqueeze(0)
                 lstm_input = torch.cat([s_i, z, last_step_context], 2)
                 y, hidden_cell = self.decoder.lstm_prediction(inp=lstm_input, hidden_cell=hidden_cell)
-                pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q = self.decoder.extract_params(y)
+                pi, mu_x, mu_y, sigma_x, sigma_y, rho_xy, q = self.decoder.extract_params(y, tau=tau)
                 # (pi, mu_x, mu_y, sigma_x, sigma_y,
                 #  rho_xy, q), hidden_cell = self.decoder(s_i, z, hidden_cell)
                 s_i = self.sample_next(
@@ -110,7 +110,7 @@ class AttentionHead(nn.Module):
 
 
 class DecoderAttention(Decoder):
-    def __init__(self, dec_hidden_size=2048, Nz=128, M=20, tau=1.0, dropout=0.1, Ne=64, n_attention_heads=2):
+    def __init__(self, dec_hidden_size=2048, Nz=128, M=20, dropout=0.1, Ne=64, n_attention_heads=2):
         super().__init__()
         self.M = M
         self.Nz = Nz
@@ -119,7 +119,6 @@ class DecoderAttention(Decoder):
         self.fc_hc = nn.Linear(Nz, 2*dec_hidden_size)
         self.decoder_rnn = nn.LSTM(5+Nz+n_attention_heads*Ne, dec_hidden_size, dropout=dropout)
         self.fc_y = nn.Linear(dec_hidden_size, 6*M+3)
-        self.tau = tau
         self.n_attention_heads = n_attention_heads
         self.attention_heads = nn.ModuleList([
             AttentionHead(Ne=self.Ne)
@@ -133,7 +132,7 @@ class DecoderAttention(Decoder):
         assert (context.shape[2]==self.n_attention_heads*self.Ne)
         return context
 
-    def forward(self, x, z, hidden_cell=None):
+    def forward(self, x, z, hidden_cell=None, tau=1.0):
         seq_len, batch_size, input_size = x.shape
         zs = torch.stack([z] * seq_len)
         attention_context = self.compute_masked_attention_context(x)
@@ -141,4 +140,4 @@ class DecoderAttention(Decoder):
 
         y, (h, c) = self.lstm_prediction(inp=lstm_input, hidden_cell=hidden_cell)
 
-        return self.extract_params(y), (h, c)
+        return self.extract_params(y, tau=tau), (h, c)
